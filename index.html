@@ -1,0 +1,407 @@
+<!DOCTYPE html>
+<html lang="it">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Calcolatore PUN da Bolletta — Materia Energia + ARERA</title>
+<style>
+  :root { --blu:#1d4ed8; --verde:#15803d; --rosso:#b91c1c; --grigio:#f3f4f6; }
+  * { box-sizing:border-box; } body { font-family:system-ui,Segoe UI,Arial,sans-serif; margin:0; background:#f8fafc; color:#111827; }
+  header { background:#0f172a; color:#fff; padding:20px 24px; }
+  header h1 { margin:0; font-size:1.25rem; } header p { margin:6px 0 0; color:#cbd5e1; font-size:.9rem; }
+  main { max-width:980px; margin:0 auto; padding:20px; display:grid; gap:16px; }
+  .card { background:#fff; border:1px solid #e5e7eb; border-radius:12px; padding:18px; }
+  .card h2 { margin:0 0 10px; font-size:1.05rem; }
+  #drop { border:2px dashed #93c5fd; border-radius:12px; padding:26px; text-align:center; cursor:pointer; background:#eff6ff; }
+  #drop.over { background:#dbeafe; }
+  textarea { width:100%; min-height:140px; font-family:ui-monospace,monospace; font-size:.8rem; padding:10px; border:1px solid #d1d5db; border-radius:8px; }
+  .grid { display:grid; grid-template-columns:repeat(auto-fit,minmax(140px,1fr)); gap:10px; }
+  label { font-size:.78rem; font-weight:600; display:grid; gap:4px; }
+  input, select { padding:8px; border:1px solid #d1d5db; border-radius:8px; font-size:.9rem; }
+  button { background:var(--blu); color:#fff; border:0; border-radius:8px; padding:10px 16px; font-weight:700; cursor:pointer; }
+  button.ghost { background:#e5e7eb; color:#111827; } button:disabled { opacity:.5; }
+  table { width:100%; border-collapse:collapse; font-size:.88rem; margin-top:8px; }
+  th, td { text-align:left; padding:7px 8px; border-bottom:1px solid #e5e7eb; } td.num { text-align:right; font-variant-numeric:tabular-nums; }
+  tr.tot td { font-weight:800; background:var(--grigio); }
+  .warn { background:#fef9c3; border:1px solid #facc15; border-radius:8px; padding:8px 10px; font-size:.82rem; margin-top:8px; }
+  .err { background:#fee2e2; border:1px solid #f87171; border-radius:8px; padding:8px 10px; font-size:.82rem; margin-top:8px; }
+  .pun { background:#f0fdf4; border:1px solid #86efac; border-radius:8px; padding:8px 10px; font-size:.85rem; margin-top:8px; }
+  .mono { font-size:.8rem; color:#475569; } code { background:#f1f5f9; padding:1px 5px; border-radius:4px; }
+  .row { display:flex; gap:8px; flex-wrap:wrap; align-items:center; }
+  /* ── Foglio report cliente (anteprima + stampa PDF) ── */
+  #printArea { background:#fff; border:1px solid #e5e7eb; border-radius:12px; padding:28px; }
+  #printArea .f-head { display:flex; gap:18px; align-items:center; border-bottom:3px solid #0f172a; padding-bottom:14px; }
+  #printArea .f-head img { width:130px; height:130px; object-fit:contain; background:#000; border-radius:10px; }
+  #printArea .f-head h1 { margin:0; font-size:1.3rem; letter-spacing:.06em; }
+  #printArea .f-head p { margin:4px 0 0; color:#475569; font-size:.88rem; }
+  #printArea .f-meta { display:flex; justify-content:space-between; gap:10px; flex-wrap:wrap; margin:12px 0; font-size:.85rem; }
+  #printArea .f-banner { margin:16px 0; padding:16px; border-radius:12px; text-align:center; }
+  #printArea .f-banner.ok { background:#f0fdf4; border:2px solid #16a34a; }
+  #printArea .f-banner.ko { background:#fef2f2; border:2px solid #dc2626; }
+  #printArea .f-banner .big { font-size:1.9rem; font-weight:800; }
+  #printArea .f-banner.ok .big { color:#15803d; } #printArea .f-banner.ko .big { color:#b91c1c; }
+  #printArea .f-note { font-size:.75rem; color:#475569; margin-top:14px; border-top:1px solid #e5e7eb; padding-top:10px; }
+  #printArea .f-foot { display:flex; justify-content:space-between; font-size:.75rem; color:#64748b; margin-top:10px; }
+  @media print {
+    body > header, body > main { display:none !important; }
+    body { background:#fff; }
+    #printArea { border:0; border-radius:0; padding:0; }
+    #printArea[hidden] { display:block !important; }
+  }
+  /* ── Smartphone agenti ── */
+  @media (max-width:640px) {
+    header { padding:14px 16px; } header h1 { font-size:1.05rem; }
+    main { padding:12px; }
+    .card { padding:14px; }
+    button { width:100%; padding:12px; font-size:1rem; }
+    .row button { flex:1 1 100%; }
+    table { display:block; overflow-x:auto; }
+    #printArea { padding:16px; }
+    #printArea .f-head img { width:84px; height:84px; }
+    #printArea .f-head h1 { font-size:1rem; }
+    #printArea .f-banner .big { font-size:1.5rem; }
+    input, select, textarea { font-size:16px; } /* evita zoom automatico iOS */
+  }
+</style>
+</head>
+<body>
+<header>
+  <h1>📘 Calcolatore PUN da bolletta</h1>
+  <p>Estrae il <strong>PUN riportato dal fornitore</strong> (fasce F1/F2/F3 o monorario), applica <code>PUN × 1,10 + capacity + dispacciamento + spread</code>, aggiunge i costi ARERA e genera il totale con IVA.</p>
+</header>
+<main>
+  <section class="card">
+    <h2>1. Bolletta PDF (o testo)</h2>
+    <div id="drop">Trascina qui il PDF della bolletta oppure clicca per selezionarlo<br><span class="mono">Lettura 100% locale con pdf.js — nessun upload</span></div>
+    <input type="file" id="file" accept="application/pdf" hidden>
+    <div class="row" style="margin-top:8px">
+      <button class="ghost" id="btnTesto">Mostra / incolla testo</button>
+      <button class="ghost" id="btnEsempio">Carica esempio biorario</button>
+      <span class="mono" id="stato">Nessun file caricato.</span>
+    </div>
+    <div id="wrapTesto" hidden style="margin-top:8px">
+      <textarea id="testo" placeholder="Incolla qui il testo della bolletta se il PDF non è leggibile…"></textarea>
+      <div class="row" style="margin-top:8px"><button id="btnEstrai">Estrai PUN dal testo</button></div>
+    </div>
+    <div id="punOut"></div>
+  </section>
+
+  <section class="card">
+    <h2>2. Consumi e parametri</h2>
+    <div class="grid">
+      <label>kWh F1<input type="number" id="kF1" value="100" min="0" step="any"></label>
+      <label>kWh F2<input type="number" id="kF2" value="80" min="0" step="any"></label>
+      <label>kWh F3<input type="number" id="kF3" value="120" min="0" step="any"></label>
+      <label>kWh MONORARIO (alt. a F1/F2/F3)<input type="number" id="kMono" value="0" min="0" step="any"></label>
+      <label>Potenza kW<input type="number" id="kW" value="3" min="0" step="any"></label>
+      <label>Mesi<input type="number" id="mesi" value="1" min="1" step="1"></label>
+      <label>IVA<select id="iva"><option value="0.10" selected>10% (domestico)</option><option value="0.22">22% (non domestico)</option></select></label>
+      <label>Capacity €/kWh<input type="number" id="capacity" value="0.006288" step="0.000001"></label>
+    </div>
+    <p class="mono">Se la bolletta copre 2 mesi (es. giugno + luglio) con PUN diversi e consumi NON separati, il programma usa il PUN medio del periodo. Se i consumi sono separati per mese, calcola i due mesi uno alla volta e somma.</p>
+    <div class="grid" style="margin-top:8px">
+      <label>PUN manuale F1 (se assente)<input type="number" id="punManF1" step="any" placeholder="—"></label>
+      <label>PUN manuale F2<input type="number" id="punManF2" step="any" placeholder="—"></label>
+      <label>PUN manuale F3<input type="number" id="punManF3" step="any" placeholder="—"></label>
+      <label>PUN manuale mono<input type="number" id="punManMono" step="any" placeholder="—"></label>
+    </div>
+    <p class="mono">Solo se il PUN non è in bolletta (es. offerta a prezzo fisso senza indice): il prezzo energia viene calcolato in automatico col listino WBE del punto 4.</p>
+    <div id="punPreview"></div>
+    <div class="row"><button id="btnCalcola" disabled>Calcola bolletta</button></div>
+  </section>
+
+  <section class="card" id="cardRis" hidden>
+    <h2>3. Simulazione WBE</h2>
+    <div id="risultato"></div>
+  </section>
+
+  <section class="card">
+    <h2>4. Report cliente PDF (bolletta attuale + simulazione WBE + risparmio annuo)</h2>
+    <div class="grid">
+      <label>Cliente (facoltativo)<input type="text" id="repCliente" placeholder="Nome / Ragione sociale"></label>
+      <label>Totale bolletta cliente € (periodo)<input type="number" id="repTotCliente" min="0" step="any" placeholder="es. 156,20"></label>
+      <label>Spread offerta WBE €/kWh<input type="number" id="wbeSpread" value="0.012" step="0.001"></label>
+      <label>Dispacciamento WBE<select id="wbeDisp"><option value="0.003" selected>0,003 €/kWh</option><option value="0.008">0,008 €/kWh</option></select></label>
+      <label>PCV WBE €/mese<input type="number" id="wbePcv" value="7.87" step="any"></label>
+    </div>
+    <p class="mono" id="totHint">La simulazione WBE riusa PUN di bolletta, consumi, kW, mesi e IVA inseriti sopra, con le condizioni commerciali WBE. Aggiorna spread/dispacciamento/PCV con il listino vigente.</p>
+    <div class="row"><button id="btnReport">Genera confronto</button> <button class="ghost" id="btnPdf" disabled>Scarica PDF</button></div>
+  </section>
+
+  <div id="printArea" hidden></div>
+</main>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
+<script src="./calcolo-pun.js"></script>
+<script>
+(function () {
+  'use strict';
+  const L = window.PunBolletta;
+  if (window.pdfjsLib) pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
+
+  const $ = (id) => document.getElementById(id);
+  let punCorrente = null;
+
+  const fmtE = (n, d = 2) => Number(n).toLocaleString('it-IT', { minimumFractionDigits: d, maximumFractionDigits: d }) + ' €';
+  const fmt5 = (n) => Number(n).toLocaleString('it-IT', { minimumFractionDigits: 5, maximumFractionDigits: 5 });
+
+  $('btnTesto').onclick = () => { $('wrapTesto').hidden = !$('wrapTesto').hidden; };
+  $('btnEsempio').onclick = () => {
+    $('wrapTesto').hidden = false;
+    $('testo').value = 'Fattura energia elettrica — periodo 01/06/2025 - 30/06/2025\nIndice di riferimento: PUN\nF1 0,12500 €/kWh\nF2 0,13500 €/kWh\nF3 0,11000 €/kWh\nPotenza contrattuale 3 kW';
+    estrai($('testo').value);
+  };
+  $('btnEstrai').onclick = () => estrai($('testo').value);
+
+  const drop = $('drop'), file = $('file');
+  drop.onclick = () => file.click();
+  drop.ondragover = (e) => { e.preventDefault(); drop.classList.add('over'); };
+  drop.ondragleave = () => drop.classList.remove('over');
+  drop.ondrop = (e) => { e.preventDefault(); drop.classList.remove('over'); if (e.dataTransfer.files[0]) leggiPDF(e.dataTransfer.files[0]); };
+  file.onchange = () => { if (file.files[0]) leggiPDF(file.files[0]); };
+
+  async function leggiPDF(f) {
+    if (f.type !== 'application/pdf') { alert('Seleziona un PDF.'); return; }
+    $('stato').textContent = 'Lettura ' + f.name + '…';
+    try {
+      const buf = await f.arrayBuffer();
+      const pdf = await pdfjsLib.getDocument({ data: buf }).promise;
+      let pagine = [];
+      for (let i = 1; i <= pdf.numPages; i++) {
+        const pg = await pdf.getPage(i);
+        const tc = await pg.getTextContent();
+        let lastY = null, righe = [], cur = [];
+        for (const it of tc.items) {
+          if (lastY !== null && Math.abs(it.transform[5] - lastY) > 2) { righe.push(cur.join(' ')); cur = []; }
+          cur.push(it.str); lastY = it.transform[5];
+        }
+        if (cur.length) righe.push(cur.join(' '));
+        pagine.push(righe.join('\n'));
+      }
+      const testo = pagine.join('\n\n');
+      $('wrapTesto').hidden = false;
+      $('testo').value = testo;
+      $('stato').textContent = f.name + ' — ' + pdf.numPages + ' pag., ' + testo.length + ' caratteri estratti.';
+      estrai(testo);
+    } catch (e) { console.error(e); alert('Errore lettura PDF: ' + e.message); }
+  }
+
+  function estrai(testo) {
+    const pun = L.estraiPUN(testo);
+    punCorrente = pun.tipo === 'NON_TROVATO' ? null : pun;
+    let h = '';
+    if (pun.tipo === 'NON_TROVATO') {
+      h += '<div class="err">PUN di riferimento mensile non trovato. Il programma cerca: <code>PUN</code>, <code>Prezzo Unico Nazionale</code>, <code>Indice di riferimento: PUN</code>, <code>PUN medio mensile</code> + tabelle mensili F1/F2/F3/MONORARIA/F23. Cerca in bolletta la sezione “Indice di riferimento” o “Dettaglio prezzi” (spesso a fondo fattura), poi usa “Mostra / incolla testo” per verificare cosa è stato letto.</div>';
+    } else if (pun.offerta === 'FISSO') {
+      const pf = pun.prezziFissi || {};
+      const cf = (v) => (Number.isFinite(v) ? fmt5(v) + '/kWh' : '—');
+      h += '<div class="pun"><strong>Offerta a PREZZO FISSO rilevata</strong> — costo €/kWh da bolletta, applicato così com\'è (senza formula PUN):<br>';
+      h += 'F1 <strong>' + cf(pf.F1) + '</strong> — F2 <strong>' + cf(pf.F2) + '</strong> — F3 <strong>' + cf(pf.F3) + '</strong> — Mono <strong>' + cf(pf.mono) + '</strong>';
+      if (![pf.F1, pf.F2, pf.F3].every(Number.isFinite) && Number.isFinite(pf.mono)) {
+        h += '<br><span class="mono">“Vendita Mono prezzo fisso” (' + fmt5(pf.mono) + '/kWh) applicato a F1, F2 e F3.</span>';
+      }
+      h += '</div>';
+    } else {
+      h += '<div class="pun"><strong>PUN di riferimento mensile da bolletta (' + (pun.tipo === 'FASCE' ? 'per fascia' : 'monorario') + '):</strong><br>';
+      if (pun.tipo === 'FASCE') h += 'Media usata nel calcolo — F1 <strong>' + fmt5(pun.punF1) + '</strong>/kWh — F2 <strong>' + fmt5(pun.punF2) + '</strong>/kWh — F3 <strong>' + fmt5(pun.punF3) + '</strong>/kWh';
+      else h += 'Media usata nel calcolo — MONO <strong>' + fmt5(pun.punMono) + '</strong>/kWh';
+      h += '<br><span class="mono">Valori €/MWh convertiti in €/kWh (÷1000). Righe trovate: ' + pun.righe.length + '.</span></div>';
+      if (pun.periodi && pun.periodi.length) {
+        const cella = (v) => (Number.isFinite(v) ? fmt5(v) : '—');
+        h += '<table><tr><th>Mese di riferimento</th><th style="text-align:right">PUN F1</th><th style="text-align:right">PUN F2</th><th style="text-align:right">PUN F3</th><th style="text-align:right">PUN mono</th></tr>';
+        for (const p of pun.periodi) {
+          h += '<tr><td>' + String(p.periodo || '?').replace(/</g, '&lt;') + (p.peso ? ' <span class="mono">(' + p.peso + ' gg)</span>' : '') + '</td>'
+            + '<td class="num">' + cella(p.punF1) + '</td><td class="num">' + cella(p.punF2) + '</td>'
+            + '<td class="num">' + cella(p.punF3) + '</td><td class="num">' + cella(p.punMono != null ? p.punMono : p.punF23) + '</td></tr>';
+        }
+        h += '</table>';
+        if (pun.periodi.length > 1) {
+          h += '<div class="warn">Bolletta multi-mese: nel calcolo è usata la <strong>media ponderata per giorni</strong>. Se la bolletta separa i consumi per mese, calcola ciascun mese da solo (stesso PUN, consumi del mese) e somma i totali.</div>';
+        }
+      }
+    }
+    (pun.avvisi || []).forEach(a => { h += '<div class="warn">' + a.replace(/</g, '&lt;') + '</div>'; });
+    if (pun.righe.length) h += '<p class="mono">Righe PUN: <code>' + pun.righe.slice(0, 6).map(r => r.replace(/</g, '&lt;')).join('</code><br><code>') + '</code></p>';
+    if (pun.righeFisse && pun.righeFisse.length) h += '<p class="mono">Righe prezzo fisso: <code>' + pun.righeFisse.slice(0, 6).map(r => r.replace(/</g, '&lt;')).join('</code><br><code>') + '</code></p>';
+    $('punOut').innerHTML = h;
+    $('btnCalcola').disabled = !punCorrente;
+    // Tenta di leggere il totale bolletta del cliente per il report (sempre modificabile)
+    const tot = estraiTotale(testo);
+    if (tot && tot > 0 && tot < 1000000) {
+      $('repTotCliente').value = tot.toFixed(2);
+      $('totHint').textContent = 'Totale bolletta rilevato dal PDF: ' + fmtE(tot) + ' (verifica e correggi se serve). Simulazione WBE con PUN di bolletta e listino WBE sotto.';
+    }
+  }
+
+  function estraiTotale(testo) {
+    const pats = [
+      /totale\s+(?:bolletta|fattura|dovuto|da\s+pagare|complessivo)[^\d€\n]{0,40}€?\s*([\d.,]+)\s*(?:€|EUR)?/i,
+      /importo\s+(?:totale|dovuto|a\s+pagare|da\s+pagare|complessivo)[^\d€\n]{0,40}€?\s*([\d.,]+)/i,
+      /totale\s+da\s+pagare[^\d\n]{0,20}([\d.,]+)/i,
+      /saldo\s+(?:dovuto|a\s+debito)[^\d\n]{0,20}([\d.,]+)/i,
+    ];
+    for (const p of pats) {
+      const m = String(testo || '').match(p);
+      if (m) {
+        const v = L.parseIT(m[1]);
+        if (Number.isFinite(v) && v > 0) return v;
+      }
+    }
+    return null;
+  }
+
+  function leggiConsumi() {
+    const mono = parseFloat($('kMono').value) || 0;
+    return mono > 0
+      ? { consumi: { mono }, mono }
+      : { consumi: { F1: parseFloat($('kF1').value) || 0, F2: parseFloat($('kF2').value) || 0, F3: parseFloat($('kF3').value) || 0 }, mono: 0 };
+  }
+
+  // PUN effettivo per i calcoli: quello di bolletta, ma il MANUALE vince se compilato
+  // (la simulazione usa sempre la formula PUN con IVA/dispacciamento/spread/capacity del punto 2).
+  function punEffettivo() {
+    const base = { ...(punCorrente || {}) };
+    const m1 = parseFloat($('punManF1').value), m2 = parseFloat($('punManF2').value),
+      m3 = parseFloat($('punManF3').value), mm = parseFloat($('punManMono').value);
+    let touched = false;
+    if (m1 > 0) { base.punF1 = m1; touched = true; }
+    if (m2 > 0) { base.punF2 = m2; touched = true; }
+    if (m3 > 0) { base.punF3 = m3; touched = true; }
+    if (mm > 0) { base.punMono = mm; touched = true; }
+    if (touched) { base.offerta = 'INDICIZZATO_PUN'; base._manuale = true; }
+    return base;
+  }
+
+  // Listino WBE (punto 4): unico per simulazione punto 3 e report → totali identici.
+  function listinoWBE() {
+    return {
+      dispacciamento: parseFloat($('wbeDisp').value),
+      spread: parseFloat($('wbeSpread').value),
+      pcv: parseFloat($('wbePcv').value),
+    };
+  }
+
+  // Unico calcolo WBE condiviso da punto 3 e report: stesso input = stesso totale.
+  function calcolaWBE() {
+    const { consumi, mono } = leggiConsumi();
+    const kW = parseFloat($('kW').value) || 0, mesi = parseInt($('mesi').value) || 1, iva = parseFloat($('iva').value);
+    const wbe = listinoWBE();
+    const r = L.calcolaBolletta({
+      consumi, pun: punEffettivo(), kW, mesi, iva,
+      capacity: parseFloat($('capacity').value),
+      dispacciamento: wbe.dispacciamento, spread: wbe.spread, pcv: wbe.pcv,
+    });
+    return { consumi, mono, kW, mesi, iva, r };
+  }
+
+  // Anteprima automatica: PUN manuale + formula con listino WBE
+  function aggiornaAnteprima() {
+    const el = $('punPreview');
+    if (!el) return;
+    const vals = [parseFloat($('punManF1').value), parseFloat($('punManF2').value),
+      parseFloat($('punManF3').value), parseFloat($('punManMono').value)];
+    if (!vals.some((v) => v > 0)) { el.innerHTML = ''; return; }
+    const o = { capacity: parseFloat($('capacity').value), dispacciamento: listinoWBE().dispacciamento, spread: listinoWBE().spread };
+    const pv = (v) => (v > 0 ? fmt5(L.prezzoDaPun(v, o)) + '/kWh' : '—');
+    el.innerHTML = '<div class="pun">Prezzo energia WBE calcolato in automatico (PUN × 1,10 + ' + o.capacity + ' + ' + o.dispacciamento + ' + ' + o.spread + '): '
+      + 'F1 <strong>' + pv(vals[0]) + '</strong> — F2 <strong>' + pv(vals[1]) + '</strong> — F3 <strong>' + pv(vals[2]) + '</strong> — Mono <strong>' + pv(vals[3]) + '</strong></div>';
+  }
+  ['punManF1', 'punManF2', 'punManF3', 'punManMono', 'wbeDisp', 'wbeSpread', 'capacity'].forEach((id) => {
+    const n = $(id);
+    if (n) n.addEventListener('input', aggiornaAnteprima);
+  });
+  $('btnCalcola').onclick = () => {
+    if (!punCorrente) return;
+    const punEff = punEffettivo();
+    if (punEff.offerta === 'FISSO' && !punEff._manuale) {
+      $('risultato').innerHTML = '<div class="warn">Bolletta a prezzo fisso senza PUN: inserisci il <strong>PUN manuale</strong> qui sopra per la simulazione WBE.</div>';
+      $('cardRis').hidden = false;
+      return;
+    }
+    try {
+      const { consumi, mono, r } = calcolaWBE(); // stesso calcolo del report → totali identici
+      const D = L.DEFAULTS;
+      let h = '';
+      if (punEff._manuale) h += '<div class="warn">Simulazione con <strong>PUN manuale</strong> + listino WBE (spread ' + r.input.spread + ', dispacciamento ' + r.input.dispacciamento + ').</div>';
+      h += '<table><tr><th>Voce</th><th>Formula</th><th style="text-align:right">Importo</th></tr>';
+      const row = (v, f, imp, tot) => '<tr' + (tot ? ' class="tot"' : '') + '><td>' + v + '</td><td class="mono">' + f + '</td><td class="num">' + fmtE(imp) + '</td></tr>';
+      if (mono > 0) h += row('Materia energia mono', mono + ' kWh × ' + fmt5(r.prezzi.prezzoMono), r.materiaEnergia);
+      else {
+        if (r.dettaglioEnergia.costoF1) h += row('Energia F1', consumi.F1 + ' × ' + fmt5(r.prezzi.prezzoF1), r.dettaglioEnergia.costoF1);
+        if (r.dettaglioEnergia.costoF2) h += row('Energia F2', consumi.F2 + ' × ' + fmt5(r.prezzi.prezzoF2), r.dettaglioEnergia.costoF2);
+        if (r.dettaglioEnergia.costoF3) h += row('Energia F3', consumi.F3 + ' × ' + fmt5(r.prezzi.prezzoF3), r.dettaglioEnergia.costoF3);
+        h += row('Materia energia (somma)', '', r.materiaEnergia);
+      }
+      h += row('Rete variabile', r.input.kwhTot + ' × ' + D.reteVar, r.reteVar);
+      h += row('Quota potenza', r.input.kW + ' kW × 4,386 × ' + r.input.mesi + ' m', r.quotaPotenza);
+      h += row('Rete fissa', '3,72 × ' + r.input.mesi + ' m', r.reteFissa);
+      h += row('PCV', '7,87 × ' + r.input.mesi + ' m', r.pcv);
+      h += row('Accisa', r.input.kwhTot + ' × 0,0125', r.accisa);
+      h += row('Imponibile', '', r.imponibile);
+      h += row('IVA ' + Math.round(r.input.iva * 100) + '%', '', r.importoIva);
+      h += row('TOTALE BOLLETTA', '', r.totale, true);
+      h += '</table>';
+      if (r.fontePrezzi === 'PREZZI_FISSI') h += '<p class="mono">Offerta a prezzo fisso: costo €/kWh da bolletta applicato alle fasce, senza maggiorazioni. Totale kWh: ' + r.input.kwhTot + '.</p>';
+      else h += '<p class="mono">Prezzo energia = PUN × 1,10 + ' + r.input.capacity + ' (capacity) + ' + r.input.dispacciamento + ' (dispacciamento) + ' + r.input.spread + ' (spread). Totale kWh: ' + r.input.kwhTot + '.</p>';
+      $('risultato').innerHTML = h;
+      $('cardRis').hidden = false;
+      $('cardRis').scrollIntoView({ behavior: 'smooth' });
+    } catch (e) { $('risultato').innerHTML = '<div class="err">' + String(e.message).replace(/</g, '&lt;') + '</div>'; $('cardRis').hidden = false; }
+  };
+
+  // ─── 4. Report cliente: bolletta attuale vs simulazione WBE + risparmio annuo ──
+  $('btnReport').onclick = () => {
+    if (!punCorrente) { alert('Prima estrai il PUN dalla bolletta (punto 1).'); return; }
+    const punEff = punEffettivo();
+    if (punEff.offerta === 'FISSO' && !punEff._manuale) {
+      alert('La bolletta è a prezzo fisso e non riporta il PUN: inserisci il PUN manuale (punto 2) per abilitare la simulazione WBE.');
+      return;
+    }
+    const totCliente = parseFloat($('repTotCliente').value) || 0;
+    if (!(totCliente > 0)) { alert('Inserisci il totale della bolletta del cliente.'); $('repTotCliente').focus(); return; }
+    // Stesso calcolo del punto 3 (listino WBE) → i due totali sono identici
+    const { consumi, kW, mesi } = calcolaWBE();
+    const wbe = calcolaWBE().r;
+    const rispPeriodo = totCliente - wbe.totale;
+    const rispMensile = rispPeriodo / mesi;
+    const rispAnnuo = rispMensile * 12; // risparmio annuo approssimativo
+    const spesaAnnuaStimata = (totCliente / mesi) * 12;
+    const perc = totCliente > 0 ? (rispPeriodo / totCliente) * 100 : 0;
+    const pos = rispPeriodo >= 0;
+    const esc = (s) => String(s || '').replace(/</g, '&lt;');
+    const mesiPun = (punCorrente.periodi || []).map(p => p.periodo).filter(Boolean).join(' · ') || '—';
+    const oggi = new Date().toLocaleDateString('it-IT');
+
+    let h = '<div class="f-head"><img src="./logo-wolf.png" alt="Wolf Business Energy Corporation">'
+      + '<div><h1>WOLF BUSINESS ENERGY CORPORATION</h1><p>Asset Management — Analisi bolletta e simulazione offerta</p></div></div>';
+    h += '<div class="f-meta"><span><strong>Cliente:</strong> ' + (esc($('repCliente').value) || '—') + '</span>'
+      + '<span><strong>Data analisi:</strong> ' + oggi + '</span></div>';
+    h += '<div class="f-meta"><span><strong>Consumi periodo:</strong> ' + wbe.input.kwhTot + ' kWh in ' + mesi + ' mes' + (mesi > 1 ? 'i' : 'e') + ' — ' + kW + ' kW</span>'
+      + '<span><strong>PUN mensile di riferimento:</strong> ' + esc(mesiPun) + '</span></div>';
+    h += '<table><tr><th>Voce (periodo ' + mesi + ' mes' + (mesi > 1 ? 'i' : 'e') + ')</th><th style="text-align:right">Bolletta attuale</th><th style="text-align:right">Simulazione WBE</th></tr>';
+    h += '<tr><td>Materia energia (PUN × 1,10 + capacity + dispacciamento + spread)</td><td class="num">—</td><td class="num">' + fmtE(wbe.materiaEnergia) + '</td></tr>';
+    h += '<tr><td>Oneri, rete, PCV, accisa + IVA ' + Math.round(wbe.input.iva * 100) + '%</td><td class="num">—</td><td class="num">' + fmtE(wbe.totale - wbe.materiaEnergia) + '</td></tr>';
+    h += '<tr class="tot"><td>TOTALE periodo</td><td class="num">' + fmtE(totCliente) + '</td><td class="num">' + fmtE(wbe.totale) + '</td></tr>';
+    h += '<tr><td>Risparmio nel periodo (' + (pos ? '−' : '+') + Math.abs(perc).toFixed(1) + '%)</td><td class="num" colspan="2"><strong>' + (pos ? '' : '−') + fmtE(Math.abs(rispPeriodo)) + '</strong></td></tr>';
+    h += '</table>';
+    h += '<p class="mono">Simulazione con listino WBE (spread ' + wbe.input.spread + ', dispacciamento ' + wbe.input.dispacciamento + ', PCV ' + $('wbePcv').value + '/mese) — identica al punto 3.</p>';
+    h += '<div class="f-banner ' + (pos ? 'ok' : 'ko') + '"><div>' + (pos ? 'RISPARMIO ANNUO APPROSSIMATIVO' : 'MAGGIOR COSTO ANNUO STIMATO') + '</div>'
+      + '<div class="big">' + (pos ? '' : '−') + fmtE(Math.abs(rispAnnuo)) + '</div>'
+      + '<div>Stima su 12 mesi dai consumi del periodo (' + fmtE(Math.abs(rispMensile)) + '/mese su spesa annua stimata di ' + fmtE(spesaAnnuaStimata) + ').</div></div>';
+    h += '<div class="f-note">Metodo: PUN di riferimento mensile riportato dal fornitore in bolletta; prezzo energia WBE = PUN × 1,10 + capacity '
+      + wbe.input.capacity + ' + dispacciamento ' + wbe.input.dispacciamento + ' + spread WBE ' + wbe.input.spread
+      + ' + PCV WBE ' + $('wbePcv').value + '/mese; oneri ARERA e IVA come da bolletta. '
+      + 'Il PUN varia ogni mese: il risparmio annuo è una proiezione indicativa basata sul periodo analizzato, non una garanzia contrattuale.</div>';
+    h += '<div class="f-foot"><span>Wolf Business Energy Corporation — Asset Management</span><span>' + oggi + '</span></div>';
+
+    $('printArea').innerHTML = h;
+    $('printArea').hidden = false;
+    $('btnPdf').disabled = false;
+    $('printArea').scrollIntoView({ behavior: 'smooth' });
+  };
+
+  $('btnPdf').onclick = () => window.print();
+})();
+</script>
+</body>
+</html>
