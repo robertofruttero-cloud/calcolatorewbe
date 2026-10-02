@@ -497,6 +497,8 @@
    *  consumi: {F1,F2,F3} oppure {mono} oppure {F1, F23}
    *  pun: output di estraiPUN() oppure {punF1,punF2,punF3,punMono}
    *  prezziFissi: override {F1,F2,F3,mono} — costo €/kWh usato così com'è
+   *  canoneTV: € del periodo (fuori campo IVA) — bonusSociale: sconto € del periodo
+   *  perdite: frazione (0.10 = 10%) — capacity, dispacciamento, spread in €/kWh
    *  kW, mesi, iva (0.10 o 0.22 oppure 10/22), capacity, dispacciamento, spread
    *
    * Se pun.offerta === 'FISSO' usa pun.prezziFissi senza formula PUN;
@@ -526,6 +528,8 @@
     const cap = Number(o.capacity ?? DEFAULTS.capacity);
     const disp = Number(o.dispacciamento ?? DEFAULTS.dispacciamento);
     const spread = Number(o.spread ?? DEFAULTS.spread);
+    const perd = Number(o.perdite ?? DEFAULTS.perdite); // frazione: 0.10 = 10%
+    const comp = { capacity: cap, dispacciamento: disp, spread, perdite: perd };
 
     let prezzoF1 = NaN, prezzoF2 = NaN, prezzoF3 = NaN, prezzoMono = NaN;
     let costoF1 = 0, costoF2 = 0, costoF3 = 0, costoMono = 0;
@@ -547,7 +551,7 @@
       } else {
         const pm = Number(pun.punMono);
         if (!Number.isFinite(pm)) throw new Error('Consumo monorario ma nessun prezzo (PUN monorario o fisso) trovato in bolletta.');
-        prezzoMono = prezzoDaPun(pm, { capacity: cap, dispacciamento: disp, spread });
+        prezzoMono = prezzoDaPun(pm, comp);
         costoMono = kMono * prezzoMono;
       }
     } else if (pf && (fin(pf.F1) || fin(pf.F2) || fin(pf.F3) || fin(pf.mono))) {
@@ -571,9 +575,9 @@
       if (kF1 > 0 && !Number.isFinite(p1)) throw new Error('Consumo F1 senza PUN F1 in bolletta.');
       if (kF2 > 0 && !Number.isFinite(p2)) throw new Error('Consumo F2 senza PUN F2 in bolletta.');
       if (kF3 > 0 && !Number.isFinite(p3)) throw new Error('Consumo F3 senza PUN F3 in bolletta.');
-      if (Number.isFinite(p1)) { prezzoF1 = prezzoDaPun(p1, { capacity: cap, dispacciamento: disp, spread }); costoF1 = kF1 * prezzoF1; }
-      if (Number.isFinite(p2)) { prezzoF2 = prezzoDaPun(p2, { capacity: cap, dispacciamento: disp, spread }); costoF2 = kF2 * prezzoF2; }
-      if (Number.isFinite(p3)) { prezzoF3 = prezzoDaPun(p3, { capacity: cap, dispacciamento: disp, spread }); costoF3 = kF3 * prezzoF3; }
+      if (Number.isFinite(p1)) { prezzoF1 = prezzoDaPun(p1, comp); costoF1 = kF1 * prezzoF1; }
+      if (Number.isFinite(p2)) { prezzoF2 = prezzoDaPun(p2, comp); costoF2 = kF2 * prezzoF2; }
+      if (Number.isFinite(p3)) { prezzoF3 = prezzoDaPun(p3, comp); costoF3 = kF3 * prezzoF3; }
     }
 
     const materiaEnergia = costoF1 + costoF2 + costoF3 + costoMono;
@@ -587,10 +591,14 @@
 
     const imponibile = materiaEnergia + reteVar + quotaPotenza + reteFissa + pcv + accisa;
     const importoIva = imponibile * iva;
-    const totale = imponibile + importoIva;
+    // Voci extra: canone TV fuori campo IVA (si somma dopo) e bonus sociale (sconto).
+    // Passano identiche in simulazione e confronto: non alterano il risparmio, ma il totale sì.
+    const canoneTV = Math.max(0, Number(p.canoneTV ?? 0) || 0);
+    const bonusSociale = Math.max(0, Number(p.bonusSociale ?? 0) || 0);
+    const totale = imponibile + importoIva - bonusSociale + canoneTV;
 
     return {
-      input: { kwhTot, kW, mesi, iva, capacity: cap, dispacciamento: disp, spread },
+      input: { kwhTot, kW, mesi, iva, capacity: cap, perdite: perd, dispacciamento: disp, spread, canoneTV, bonusSociale },
       fontePrezzi,
       prezzi: { prezzoF1, prezzoF2, prezzoF3, prezzoMono },
       punUsato: {
@@ -604,8 +612,95 @@
       },
       reteVar: round2(reteVar), quotaPotenza: round2(quotaPotenza),
       reteFissa: round2(reteFissa), pcv: round2(pcv), accisa: round2(accisa),
-      imponibile: round2(imponibile), importoIva: round2(importoIva), totale: round2(totale),
+      imponibile: round2(imponibile), importoIva: round2(importoIva),
+      canoneTV: round2(canoneTV), bonusSociale: round2(bonusSociale),
+      totale: round2(totale),
     };
+  }
+
+  /**
+   * Voci extra di bolletta: canone TV e bonus sociale.
+   * - Canone TV (abbonamento RAI, fuori campo IVA: si somma DOPO l'IVA).
+   *   Se c'è una riga totale/annua usa quella, altrimenti somma le quote (rate/mesi).
+   * - Bonus sociale (sconto, spesso con segno meno): vale il valore assoluto maggiore
+   *   (evita di contarlo due volte se compare in dettaglio + riepilogo).
+   */
+  function estraiVociExtra(testo) {
+    const lines = String(testo || '').replace(/\r/g, '').split('\n');
+    const righeCanone = lines.filter((l) =>
+      /canone\s+(tv|rai)|canone\s+di\s+abbonamento|abbonamento\s+(tv|rai)|canone\s+televisione/i.test(l));
+    const righeBonus = lines.filter((l) =>
+      /bonus\s+sociale|bonus\s+elettrico|bonus\s+.*disagio|bonus\s+famiglia|sconto\s+bonus/i.test(l));
+
+    const importo = (line) => {
+      // ultimo numero con decimali; fallback: intero seguito da € ("Canone TV 90 €")
+      const nums = numeriInRiga(line).map((n) => parseIT(n.raw)).filter((v) => Number.isFinite(v) && v > 0);
+      if (nums.length) return nums[nums.length - 1];
+      const m = String(line).match(/(\d+)\s*(?:€|EUR)/i);
+      return m ? parseIT(m[1]) : NaN;
+    };
+
+    let canoneTV = 0;
+    if (righeCanone.length) {
+      const totali = righeCanone.filter((l) => /totale|complessivo|annuo|anno\s+20/i.test(l));
+      if (totali.length) {
+        const v = totali.map(importo).filter((x) => Number.isFinite(x));
+        canoneTV = v.length ? v[v.length - 1] : 0;
+      } else {
+        const quote = righeCanone.filter((l) => /rata|rate|quota|mese|mensile|mensilit|periodo/i.test(l));
+        const base = quote.length ? quote : righeCanone;
+        canoneTV = base.map(importo).filter((x) => Number.isFinite(x)).reduce((s, v) => s + v, 0);
+      }
+    }
+
+    let bonusSociale = 0;
+    if (righeBonus.length) {
+      const vals = righeBonus.map(importo).filter((x) => Number.isFinite(x));
+      if (vals.length) bonusSociale = Math.max(...vals);
+    }
+    return {
+      canoneTV: round2(canoneTV), bonusSociale: round2(bonusSociale),
+      righeCanone: righeCanone.map((l) => l.trim()).filter(Boolean),
+      righeBonus: righeBonus.map((l) => l.trim()).filter(Boolean),
+    };
+  }
+
+  /**
+   * Intestatario e indirizzo di fornitura dalla bolletta.
+   * Cerca etichette ("Intestatario:", "Cliente:", "Titolare:…") e righe stradali
+   * ("Via … 12" + eventuale "CAP Città"). Sempre verificabili/modificabili a video.
+   */
+  function estraiIntestatario(testo) {
+    const t = String(testo || '').replace(/\r/g, '');
+    const pulisci = (s) => (s || '').replace(/\s+/g, ' ').trim().slice(0, 80);
+
+    let intestatario = '';
+    const pats = [
+      /(?:intestatario|titolare\s+dell['’]?utenza|titolare\s+della\s+bolletta|nominativo|contratto\s+intestato\s+a|utenza\s+intestata\s+a)[\s:]+([^\n]{3,80})/i,
+      /(?:cliente|contraente|committente|sig\.(?:ra)?|spett\.le)\s*:\s*([^\n]{3,80})/i,
+    ];
+    for (const p of pats) {
+      const m = t.match(p);
+      if (m) {
+        // taglia code aggiuntive sulla stessa riga ("… Codice fiscale RSS…")
+        const v = pulisci(m[1].split(/\s+(?:codice|p\.?\s*iva|c\.?\s*f\.?|pod|pdr|tel|email|fattura)\b/i)[0]);
+        if (v && !/^\d+$/.test(v) && v.length >= 3) { intestatario = v; break; }
+      }
+    }
+
+    let indirizzo = '';
+    const pInd = /(?:indirizzo\s+(?:di\s+)?(?:fornitura|consegna|utenza)|luogo\s+di\s+(?:fornitura|consegna)|punto\s+di\s+fornitura|residenza|domicilio)[\s:]+([^\n]{3,90})/i;
+    const mInd = t.match(pInd);
+    if (mInd) indirizzo = pulisci(mInd[1]);
+    if (!indirizzo) {
+      const mVia = t.match(/(?:^|\n)\s*((?:via|viale|v\.le|piazza|p\.zza|corso|contrada|strada|localit[àa]|frazione|vicolo|largo)\b[^\n]{3,80})/i);
+      if (mVia) indirizzo = pulisci(mVia[1]);
+    }
+    if (indirizzo) {
+      const mCap = t.match(/(?:^|\n)\s*(\d{5})\s+([A-Za-zÀ-ÿ'’\-\s]{2,50}?)(?=\n|$)/);
+      if (mCap && !indirizzo.includes(mCap[1])) indirizzo = `${indirizzo}, ${mCap[1]} ${pulisci(mCap[2])}`;
+    }
+    return { intestatario, indirizzo };
   }
 
   /** Media ponderata PUN multi-mese quando i consumi non sono separati. */
@@ -623,7 +718,7 @@
     return { punF1: avg('punF1'), punF2: avg('punF2'), punF3: avg('punF3'), punMono: avg('punMono'), punF23: avg('punF23') };
   }
 
-  return { DEFAULTS, parseIT, normalizzaPun, estraiPUN, prezzoDaPun, calcolaBolletta, punMedioPonderato };
+  return { DEFAULTS, parseIT, normalizzaPun, estraiPUN, estraiVociExtra, estraiIntestatario, prezzoDaPun, calcolaBolletta, punMedioPonderato };
 });
 
 // ─── CLI (solo Node) ──────────────────────────────────────────────────
@@ -741,6 +836,34 @@ Opzioni: --f1 100 --f2 80 --f3 120 --mono 0 --kw 3 --mesi 2 --iva 10
     assert('stessi parametri = stesso totale', a9.totale === b9.totale, `${a9.totale} vs ${b9.totale}`);
     const c9 = lib.calcolaBolletta({ ...base9, spread: 0.012, dispacciamento: 0.003 });
     assert('listino diverso = totale diverso (la differenza è il risparmio)', c9.totale !== a9.totale, `${c9.totale} vs ${a9.totale}`);
+
+    console.log('TEST 10 — canone TV + bonus sociale in estrazione e totale');
+    const t10 = ['Canone di abbonamento TV - 2 rate mensili da 9,00 €',
+      'Totale canone TV 18,00 €',
+      'Bonus sociale elettrico -45,00 €',
+      'Totale bolletta 200,00 €'].join('\n');
+    const v10 = lib.estraiVociExtra(t10);
+    assert('canone TV = 18 (riga totale, non somma doppia)', v10.canoneTV === 18, JSON.stringify(v10));
+    assert('bonus sociale = 45 (valore assoluto)', v10.bonusSociale === 45, JSON.stringify(v10));
+    const r10 = lib.calcolaBolletta({ ...base9, spread: 0.012, dispacciamento: 0.003, canoneTV: 18, bonusSociale: 45 });
+    assert('totale = imponibile+IVA-45+18', Math.abs(r10.totale - (r10.imponibile + r10.importoIva - 45 + 18)) < 0.015, String(r10.totale));
+
+    console.log('TEST 11 — intestatario + indirizzo fornitura');
+    const t11 = ['Fattura energia elettrica n. 12345',
+      'Intestatario: Mario Rossi Codice fiscale RSSMRA80A01H501U',
+      'Indirizzo di fornitura: Via delle Rose 12',
+      '00100 Roma RM',
+      'PUN F1 0,12000 €/kWh'].join('\n');
+    const i11 = lib.estraiIntestatario(t11);
+    assert('intestatario senza codice fiscale', i11.intestatario === 'Mario Rossi', JSON.stringify(i11));
+    assert('indirizzo con via e città', /via delle rose/i.test(i11.indirizzo) && /00100 roma/i.test(i11.indirizzo), JSON.stringify(i11));
+
+    console.log('TEST 12 — tutte le voci formula modificabili (perdite comprese)');
+    const p12 = lib.prezzoDaPun(0.10, { capacity: 0.006288, dispacciamento: 0.003, spread: 0.012, perdite: 0 });
+    assert('perdite 0 → 0.12129', Math.abs(p12 - 0.12129) < 1e-5, String(p12));
+    const r12 = lib.calcolaBolletta({ ...base9, spread: 0.012, dispacciamento: 0.003, perdite: 0 });
+    assert('perdite in input', r12.input.perdite === 0, JSON.stringify(r12.input));
+    assert('prezzo F1 senza perdite', Math.abs(r12.prezzi.prezzoF1 - (0.12 + 0.006288 + 0.003 + 0.012)) < 1e-5, String(r12.prezzi.prezzoF1));
 
     console.log(`\nRisultato: ${ok} ok, ${ko} errori`);
     process.exit(ko ? 1 : 0);

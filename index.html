@@ -48,6 +48,16 @@
     #printArea { border:0; border-radius:0; padding:0; }
     #printArea[hidden] { display:block !important; }
   }
+  /* ── Login ── */
+  #login { position:fixed; inset:0; background:#0f172a; z-index:99; display:flex; align-items:center; justify-content:center; padding:20px; }
+  #login .box { background:#fff; border-radius:14px; padding:28px; width:100%; max-width:360px; text-align:center; }
+  #login .box img { width:110px; height:110px; object-fit:contain; background:#000; border-radius:10px; }
+  #login .box h2 { margin:12px 0 2px; font-size:1.1rem; }
+  #login .box p { color:#64748b; font-size:.82rem; margin:0 0 14px; }
+  #login input { width:100%; margin-bottom:10px; padding:10px; }
+  #login button { width:100%; }
+  #login .err { display:none; margin-top:10px; }
+  #logout { position:absolute; top:14px; right:16px; background:transparent; border:1px solid #475569; color:#cbd5e1; font-size:.75rem; padding:5px 10px; border-radius:6px; width:auto; }
   /* ── Smartphone agenti ── */
   @media (max-width:640px) {
     header { padding:14px 16px; } header h1 { font-size:1.05rem; }
@@ -55,6 +65,7 @@
     .card { padding:14px; }
     button { width:100%; padding:12px; font-size:1rem; }
     .row button { flex:1 1 100%; }
+    #logout { width:auto; padding:5px 10px; }
     table { display:block; overflow-x:auto; }
     #printArea { padding:16px; }
     #printArea .f-head img { width:84px; height:84px; }
@@ -65,7 +76,19 @@
 </style>
 </head>
 <body>
-<header>
+<div id="login">
+  <div class="box">
+    <img src="./logo-wolf.png" alt="WBE">
+    <h2>Wolf Business Energy</h2>
+    <p>Accesso riservato — inserisci le credenziali</p>
+    <input type="text" id="loginUser" placeholder="Utente" autocomplete="username">
+    <input type="password" id="loginPass" placeholder="Password" autocomplete="current-password">
+    <button id="btnLogin">Accedi</button>
+    <div class="err" id="loginErr">Credenziali errate.</div>
+  </div>
+</div>
+<header style="position:relative;">
+  <button id="logout" hidden>Esci</button>
   <h1>📘 Calcolatore PUN da bolletta</h1>
   <p>Estrae il <strong>PUN riportato dal fornitore</strong> (fasce F1/F2/F3 o monorario), applica <code>PUN × 1,10 + capacity + dispacciamento + spread</code>, aggiunge i costi ARERA e genera il totale con IVA.</p>
 </header>
@@ -97,6 +120,7 @@
       <label>Mesi<input type="number" id="mesi" value="1" min="1" step="1"></label>
       <label>IVA<select id="iva"><option value="0.10" selected>10% (domestico)</option><option value="0.22">22% (non domestico)</option></select></label>
       <label>Capacity €/kWh<input type="number" id="capacity" value="0.006288" step="0.000001"></label>
+      <label>Bonus sociale € (periodo)<input type="number" id="exBonus" value="0" min="0" step="any"></label>
     </div>
     <p class="mono">Se la bolletta copre 2 mesi (es. giugno + luglio) con PUN diversi e consumi NON separati, il programma usa il PUN medio del periodo. Se i consumi sono separati per mese, calcola i due mesi uno alla volta e somma.</p>
     <div class="grid" style="margin-top:8px">
@@ -118,10 +142,12 @@
   <section class="card">
     <h2>4. Report cliente PDF (bolletta attuale + simulazione WBE + risparmio annuo)</h2>
     <div class="grid">
-      <label>Cliente (facoltativo)<input type="text" id="repCliente" placeholder="Nome / Ragione sociale"></label>
+      <label>Cliente (facoltativo)<input type="text" id="repCliente" placeholder="Intestatario bolletta"></label>
+      <label>Indirizzo fornitura<input type="text" id="repIndirizzo" placeholder="Via, CAP, Città"></label>
       <label>Totale bolletta cliente € (periodo)<input type="number" id="repTotCliente" min="0" step="any" placeholder="es. 156,20"></label>
       <label>Spread offerta WBE €/kWh<input type="number" id="wbeSpread" value="0.012" step="0.001"></label>
-      <label>Dispacciamento WBE<select id="wbeDisp"><option value="0.003" selected>0,003 €/kWh</option><option value="0.008">0,008 €/kWh</option></select></label>
+      <label>Dispacciamento WBE €/kWh<input type="number" id="wbeDisp" value="0.003" step="0.001"></label>
+      <label>Perdite %<input type="number" id="wbePerdite" value="10" min="0" step="any"></label>
       <label>PCV WBE €/mese<input type="number" id="wbePcv" value="7.87" step="any"></label>
     </div>
     <p class="mono" id="totHint">La simulazione WBE riusa PUN di bolletta, consumi, kW, mesi e IVA inseriti sopra, con le condizioni commerciali WBE. Aggiorna spread/dispacciamento/PCV con il listino vigente.</p>
@@ -136,11 +162,34 @@
 <script>
 (function () {
   'use strict';
+
+  // ─── Accesso amministratore ───
+  const ADMIN_USER = 'admin', ADMIN_PASS = 'admin1234';
+  const loginBox = document.getElementById('login');
+  const logoutBtn = document.getElementById('logout');
+  const apriSessione = () => { loginBox.style.display = 'none'; logoutBtn.hidden = false; };
+  if (sessionStorage.getItem('wbe_auth') === '1') apriSessione();
+  const provaLogin = () => {
+    const u = document.getElementById('loginUser').value.trim();
+    const p = document.getElementById('loginPass').value;
+    if (u === ADMIN_USER && p === ADMIN_PASS) {
+      sessionStorage.setItem('wbe_auth', '1');
+      apriSessione();
+    } else {
+      document.getElementById('loginErr').style.display = 'block';
+    }
+  };
+  document.getElementById('btnLogin').onclick = provaLogin;
+  document.getElementById('loginPass').addEventListener('keydown', (e) => { if (e.key === 'Enter') provaLogin(); });
+  document.getElementById('loginUser').addEventListener('keydown', (e) => { if (e.key === 'Enter') provaLogin(); });
+  logoutBtn.onclick = () => { sessionStorage.removeItem('wbe_auth'); location.reload(); };
+
   const L = window.PunBolletta;
   if (window.pdfjsLib) pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
 
   const $ = (id) => document.getElementById(id);
   let punCorrente = null;
+  let canoneTV = 0; // solo automatico da bolletta (non modificabile)
 
   const fmtE = (n, d = 2) => Number(n).toLocaleString('it-IT', { minimumFractionDigits: d, maximumFractionDigits: d }) + ' €';
   const fmt5 = (n) => Number(n).toLocaleString('it-IT', { minimumFractionDigits: 5, maximumFractionDigits: 5 });
@@ -223,9 +272,24 @@
     (pun.avvisi || []).forEach(a => { h += '<div class="warn">' + a.replace(/</g, '&lt;') + '</div>'; });
     if (pun.righe.length) h += '<p class="mono">Righe PUN: <code>' + pun.righe.slice(0, 6).map(r => r.replace(/</g, '&lt;')).join('</code><br><code>') + '</code></p>';
     if (pun.righeFisse && pun.righeFisse.length) h += '<p class="mono">Righe prezzo fisso: <code>' + pun.righeFisse.slice(0, 6).map(r => r.replace(/</g, '&lt;')).join('</code><br><code>') + '</code></p>';
-    $('punOut').innerHTML = h;
     $('btnCalcola').disabled = !punCorrente;
-    // Tenta di leggere il totale bolletta del cliente per il report (sempre modificabile)
+    // Voci extra: canone TV e bonus sociale (rilevati o manuali, sempre modificabili)
+    const voci = L.estraiVociExtra(testo);
+    canoneTV = voci.canoneTV;
+    if (voci.bonusSociale > 0) $('exBonus').value = voci.bonusSociale.toFixed(2);
+    if (voci.canoneTV > 0 || voci.bonusSociale > 0) {
+      let vh = '<div class="pun"><strong>Voci extra rilevate:</strong> ';
+      const parti = [];
+      if (voci.canoneTV > 0) parti.push('Canone TV <strong>' + fmtE(voci.canoneTV) + '</strong>');
+      if (voci.bonusSociale > 0) parti.push('Bonus sociale <strong>−' + fmtE(voci.bonusSociale) + '</strong>');
+      vh += parti.join(' — ') + '<br><span class="mono">Canone fuori campo IVA (si somma dopo), bonus come sconto. Inclusi in simulazione e confronto.</span></div>';
+      h += vh;
+    }
+    $('punOut').innerHTML = h;
+    // Intestatario + indirizzo per il report (rilevati o manuali, sempre modificabili)
+    const anagr = L.estraiIntestatario(testo);
+    if (anagr.intestatario) $('repCliente').value = anagr.intestatario;
+    if (anagr.indirizzo) $('repIndirizzo').value = anagr.indirizzo;
     const tot = estraiTotale(testo);
     if (tot && tot > 0 && tot < 1000000) {
       $('repTotCliente').value = tot.toFixed(2);
@@ -273,15 +337,18 @@
   }
 
   // Listino WBE (punto 4): unico per simulazione punto 3 e report → totali identici.
+  // Tutte le voci modificabili: perdite %, capacity, dispacciamento, spread, PCV.
   function listinoWBE() {
     return {
-      dispacciamento: parseFloat($('wbeDisp').value),
-      spread: parseFloat($('wbeSpread').value),
-      pcv: parseFloat($('wbePcv').value),
+      perdite: (parseFloat($('wbePerdite').value) || 0) / 100,
+      dispacciamento: parseFloat($('wbeDisp').value) || 0,
+      spread: parseFloat($('wbeSpread').value) || 0,
+      pcv: parseFloat($('wbePcv').value) || 0,
     };
   }
 
   // Unico calcolo WBE condiviso da punto 3 e report: stesso input = stesso totale.
+  // Include canone TV (fuori campo IVA) e bonus sociale come da bolletta.
   function calcolaWBE() {
     const { consumi, mono } = leggiConsumi();
     const kW = parseFloat($('kW').value) || 0, mesi = parseInt($('mesi').value) || 1, iva = parseFloat($('iva').value);
@@ -289,7 +356,10 @@
     const r = L.calcolaBolletta({
       consumi, pun: punEffettivo(), kW, mesi, iva,
       capacity: parseFloat($('capacity').value),
+      perdite: wbe.perdite,
       dispacciamento: wbe.dispacciamento, spread: wbe.spread, pcv: wbe.pcv,
+      canoneTV: canoneTV,
+      bonusSociale: parseFloat($('exBonus').value) || 0,
     });
     return { consumi, mono, kW, mesi, iva, r };
   }
@@ -301,12 +371,13 @@
     const vals = [parseFloat($('punManF1').value), parseFloat($('punManF2').value),
       parseFloat($('punManF3').value), parseFloat($('punManMono').value)];
     if (!vals.some((v) => v > 0)) { el.innerHTML = ''; return; }
-    const o = { capacity: parseFloat($('capacity').value), dispacciamento: listinoWBE().dispacciamento, spread: listinoWBE().spread };
+    const o = { capacity: parseFloat($('capacity').value), perdite: listinoWBE().perdite, dispacciamento: listinoWBE().dispacciamento, spread: listinoWBE().spread };
+    const fmtF = (1 + o.perdite).toFixed(2).replace('.', ',');
     const pv = (v) => (v > 0 ? fmt5(L.prezzoDaPun(v, o)) + '/kWh' : '—');
-    el.innerHTML = '<div class="pun">Prezzo energia WBE calcolato in automatico (PUN × 1,10 + ' + o.capacity + ' + ' + o.dispacciamento + ' + ' + o.spread + '): '
+    el.innerHTML = '<div class="pun">Prezzo energia WBE calcolato in automatico (PUN × ' + fmtF + ' + ' + o.capacity + ' + ' + o.dispacciamento + ' + ' + o.spread + '): '
       + 'F1 <strong>' + pv(vals[0]) + '</strong> — F2 <strong>' + pv(vals[1]) + '</strong> — F3 <strong>' + pv(vals[2]) + '</strong> — Mono <strong>' + pv(vals[3]) + '</strong></div>';
   }
-  ['punManF1', 'punManF2', 'punManF3', 'punManMono', 'wbeDisp', 'wbeSpread', 'capacity'].forEach((id) => {
+  ['punManF1', 'punManF2', 'punManF3', 'punManMono', 'wbeDisp', 'wbeSpread', 'wbePerdite', 'capacity'].forEach((id) => {
     const n = $(id);
     if (n) n.addEventListener('input', aggiornaAnteprima);
   });
@@ -339,10 +410,12 @@
       h += row('Accisa', r.input.kwhTot + ' × 0,0125', r.accisa);
       h += row('Imponibile', '', r.imponibile);
       h += row('IVA ' + Math.round(r.input.iva * 100) + '%', '', r.importoIva);
+      if (r.bonusSociale > 0) h += row('Bonus sociale (sconto)', '', -r.bonusSociale);
+      if (r.canoneTV > 0) h += row('Canone TV (fuori campo IVA)', '', r.canoneTV);
       h += row('TOTALE BOLLETTA', '', r.totale, true);
       h += '</table>';
       if (r.fontePrezzi === 'PREZZI_FISSI') h += '<p class="mono">Offerta a prezzo fisso: costo €/kWh da bolletta applicato alle fasce, senza maggiorazioni. Totale kWh: ' + r.input.kwhTot + '.</p>';
-      else h += '<p class="mono">Prezzo energia = PUN × 1,10 + ' + r.input.capacity + ' (capacity) + ' + r.input.dispacciamento + ' (dispacciamento) + ' + r.input.spread + ' (spread). Totale kWh: ' + r.input.kwhTot + '.</p>';
+      else h += '<p class="mono">Prezzo energia = PUN × ' + (1 + r.input.perdite).toFixed(2).replace('.', ',') + ' + ' + r.input.capacity + ' (capacity) + ' + r.input.dispacciamento + ' (dispacciamento) + ' + r.input.spread + ' (spread). Totale kWh: ' + r.input.kwhTot + '.</p>';
       $('risultato').innerHTML = h;
       $('cardRis').hidden = false;
       $('cardRis').scrollIntoView({ behavior: 'smooth' });
@@ -376,11 +449,14 @@
       + '<div><h1>WOLF BUSINESS ENERGY CORPORATION</h1><p>Asset Management — Analisi bolletta e simulazione offerta</p></div></div>';
     h += '<div class="f-meta"><span><strong>Cliente:</strong> ' + (esc($('repCliente').value) || '—') + '</span>'
       + '<span><strong>Data analisi:</strong> ' + oggi + '</span></div>';
+    h += '<div class="f-meta"><span><strong>Indirizzo fornitura:</strong> ' + (esc($('repIndirizzo').value) || '—') + '</span></div>';
     h += '<div class="f-meta"><span><strong>Consumi periodo:</strong> ' + wbe.input.kwhTot + ' kWh in ' + mesi + ' mes' + (mesi > 1 ? 'i' : 'e') + ' — ' + kW + ' kW</span>'
       + '<span><strong>PUN mensile di riferimento:</strong> ' + esc(mesiPun) + '</span></div>';
     h += '<table><tr><th>Voce (periodo ' + mesi + ' mes' + (mesi > 1 ? 'i' : 'e') + ')</th><th style="text-align:right">Bolletta attuale</th><th style="text-align:right">Simulazione WBE</th></tr>';
     h += '<tr><td>Materia energia (PUN × 1,10 + capacity + dispacciamento + spread)</td><td class="num">—</td><td class="num">' + fmtE(wbe.materiaEnergia) + '</td></tr>';
-    h += '<tr><td>Oneri, rete, PCV, accisa + IVA ' + Math.round(wbe.input.iva * 100) + '%</td><td class="num">—</td><td class="num">' + fmtE(wbe.totale - wbe.materiaEnergia) + '</td></tr>';
+    h += '<tr><td>Oneri, rete, PCV, accisa + IVA ' + Math.round(wbe.input.iva * 100) + '%</td><td class="num">—</td><td class="num">' + fmtE(wbe.imponibile + wbe.importoIva - wbe.materiaEnergia) + '</td></tr>';
+    if (wbe.bonusSociale > 0) h += '<tr><td>Bonus sociale (sconto)</td><td class="num">—</td><td class="num">−' + fmtE(wbe.bonusSociale) + '</td></tr>';
+    if (wbe.canoneTV > 0) h += '<tr><td>Canone TV (fuori campo IVA)</td><td class="num">—</td><td class="num">' + fmtE(wbe.canoneTV) + '</td></tr>';
     h += '<tr class="tot"><td>TOTALE periodo</td><td class="num">' + fmtE(totCliente) + '</td><td class="num">' + fmtE(wbe.totale) + '</td></tr>';
     h += '<tr><td>Risparmio nel periodo (' + (pos ? '−' : '+') + Math.abs(perc).toFixed(1) + '%)</td><td class="num" colspan="2"><strong>' + (pos ? '' : '−') + fmtE(Math.abs(rispPeriodo)) + '</strong></td></tr>';
     h += '</table>';
@@ -388,9 +464,10 @@
     h += '<div class="f-banner ' + (pos ? 'ok' : 'ko') + '"><div>' + (pos ? 'RISPARMIO ANNUO APPROSSIMATIVO' : 'MAGGIOR COSTO ANNUO STIMATO') + '</div>'
       + '<div class="big">' + (pos ? '' : '−') + fmtE(Math.abs(rispAnnuo)) + '</div>'
       + '<div>Stima su 12 mesi dai consumi del periodo (' + fmtE(Math.abs(rispMensile)) + '/mese su spesa annua stimata di ' + fmtE(spesaAnnuaStimata) + ').</div></div>';
-    h += '<div class="f-note">Metodo: PUN di riferimento mensile riportato dal fornitore in bolletta; prezzo energia WBE = PUN × 1,10 + capacity '
+    h += '<div class="f-note">Metodo: PUN di riferimento mensile riportato dal fornitore in bolletta; prezzo energia WBE = PUN × ' + (1 + wbe.input.perdite).toFixed(2).replace('.', ',') + ' + capacity '
       + wbe.input.capacity + ' + dispacciamento ' + wbe.input.dispacciamento + ' + spread WBE ' + wbe.input.spread
       + ' + PCV WBE ' + $('wbePcv').value + '/mese; oneri ARERA e IVA come da bolletta. '
+      + 'Canone TV (fuori campo IVA) e bonus sociale passano identici in entrambi i totali. '
       + 'Il PUN varia ogni mese: il risparmio annuo è una proiezione indicativa basata sul periodo analizzato, non una garanzia contrattuale.</div>';
     h += '<div class="f-foot"><span>Wolf Business Energy Corporation — Asset Management</span><span>' + oggi + '</span></div>';
 
